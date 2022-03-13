@@ -1,19 +1,15 @@
 // Standard headers
-#include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 // Internal headers
-#include "field.h"
-#include "map.h"
 #include "spy.h"
 
 // Main header
 #include "game.h"
 
 // Macros
-#define MAX_SINGLE_OCCURRENCE 1UL
 #define UNUSED(x) (void)(x) // Auxiliary to avoid error of unused parameter
 
 /*----------------------------------------------------------------------------*/
@@ -25,12 +21,8 @@ struct game {
 
   size_t max_number_spies;
 
-  PlayerStrategy execute_attacker_strategy;
-  PlayerStrategy execute_defender_strategy;
-
-  Item attacker;
-  Item defender;
-  Item obstacle;
+  Player attacker;
+  Player defender;
 
   Spy attacker_spy;
   Spy defender_spy;
@@ -40,88 +32,36 @@ struct game {
 /*                          PRIVATE FUNCTIONS HEADERS                         */
 /*----------------------------------------------------------------------------*/
 
-Game allocate_game(
-  dimension_t field_dimension,
-  size_t max_number_spies,
-  PlayerStrategy execute_attacker_strategy,
-  PlayerStrategy execute_defender_strategy);
-
-bool has_map_exceeded_max_occurrences_of_symbol(
-    Map map, char symbol, size_t max_occurrences);
-void set_item_in_field_from_map(Field field, Item item, Map map);
-
-void set_attacker_in_field(Field field, Item attacker);
-void set_defender_in_field(Field field, Item defender);
-void set_obstacles_in_field(Field field, Item obstacle);
+void set_attacker_in_field(Field field, Player attacker);
+void set_defender_in_field(Field field, Player defender);
 
 bool has_spy_exceeded_max_number_uses(Spy opponent_spy,
                                       size_t max_number_spies);
-bool has_defender_captured_attacker(Item defender, Item attacker);
-bool has_attacker_arrived_end_field(Field field, Item attacker);
+bool has_defender_captured_attacker(Player defender, Player attacker);
+bool has_attacker_arrived_end_field(Field field, Player attacker);
 
-void move_item(Field field,
-               Item item,
-               Spy opponent_spy,
-               PlayerStrategy execute_item_strategy);
+void move_attacker(Field field, Player attacker, Spy defender_spy);
+void move_defender(Field field, Player defender, Spy attacker_spy);
 
 /*----------------------------------------------------------------------------*/
 /*                              PUBLIC FUNCTIONS                              */
 /*----------------------------------------------------------------------------*/
 
-Game new_game(
-    dimension_t field_dimension,
-    size_t max_number_spies,
-    PlayerStrategy execute_attacker_strategy,
-    PlayerStrategy execute_defender_strategy) {
-  Game game = allocate_game(
-      field_dimension,
-      max_number_spies,
-      execute_attacker_strategy,
-      execute_defender_strategy);
+Game new_game(dimension_t field_dimension, size_t max_number_spies) {
+  Game game = malloc(sizeof(*game));
+
+  game->field = new_field(field_dimension);
+
+  game->max_number_spies = max_number_spies;
+
+  game->attacker = new_player('A');
+  game->defender = new_player('D');
+
+  game->attacker_spy = new_spy(game->attacker);
+  game->defender_spy = new_spy(game->defender);
 
   set_attacker_in_field(game->field, game->attacker);
   set_defender_in_field(game->field, game->defender);
-  set_obstacles_in_field(game->field, game->obstacle);
-
-  return game;
-}
-
-/*----------------------------------------------------------------------------*/
-
-Game new_game_from_map(
-    Map map,
-    size_t max_number_spies,
-    PlayerStrategy execute_attacker_strategy,
-    PlayerStrategy execute_defender_strategy) {
-  if (map == NULL) return NULL;
-
-  dimension_t field_dimension = get_map_dimension(map);
-
-  Game game = allocate_game(
-      field_dimension,
-      max_number_spies,
-      execute_attacker_strategy,
-      execute_defender_strategy);
-
-  if (has_map_exceeded_max_occurrences_of_symbol(
-        map, get_item_symbol(game->attacker), MAX_SINGLE_OCCURRENCE)) {
-    fprintf(stderr, "ERROR: Map exceeded max occurrences of symbol %c\n",
-        get_item_symbol(game->attacker));
-    delete_game(game);
-    return NULL;
-  }
-
-  if (has_map_exceeded_max_occurrences_of_symbol(
-        map, get_item_symbol(game->defender), MAX_SINGLE_OCCURRENCE)) {
-    fprintf(stderr, "ERROR: Map exceeded max occurrences of symbol %c\n",
-        get_item_symbol(game->defender));
-    delete_game(game);
-    return NULL;
-  }
-
-  set_item_in_field_from_map(game->field, game->attacker, map);
-  set_item_in_field_from_map(game->field, game->defender, map);
-  set_item_in_field_from_map(game->field, game->obstacle, map);
 
   return game;
 }
@@ -137,17 +77,11 @@ void delete_game(Game game) {
   delete_spy(game->attacker_spy);
   game->attacker_spy = NULL;
 
-  delete_item(game->obstacle);
-  game->obstacle = NULL;
-
-  delete_item(game->defender);
+  delete_player(game->defender);
   game->defender = NULL;
 
-  delete_item(game->attacker);
+  delete_player(game->attacker);
   game->attacker = NULL;
-
-  game->execute_defender_strategy = NULL;
-  game->execute_attacker_strategy = NULL;
 
   game->max_number_spies = 0;
 
@@ -176,15 +110,8 @@ void play_game(Game game, size_t max_turns) {
   for (size_t turn = 0; turn < max_turns; turn++) {
     printf("Turn %ld\n", turn+1);
 
-    move_item(game->field,
-              game->attacker,
-              game->defender_spy,
-              game->execute_attacker_strategy);
-
-    move_item(game->field,
-              game->defender,
-              game->attacker_spy,
-              game->execute_defender_strategy);
+    move_attacker(game->field, game->attacker, game->defender_spy);
+    move_defender(game->field, game->defender, game->attacker_spy);
 
     print_game(game);
 
@@ -223,83 +150,7 @@ void play_game(Game game, size_t max_turns) {
 /*                             PRIVATE FUNCTIONS                              */
 /*----------------------------------------------------------------------------*/
 
-Game allocate_game(
-    dimension_t field_dimension,
-    size_t max_number_spies,
-    PlayerStrategy execute_attacker_strategy,
-    PlayerStrategy execute_defender_strategy) {
-  Game game = malloc(sizeof(*game));
-
-  game->field = new_field(field_dimension);
-
-  game->max_number_spies = max_number_spies;
-
-  game->execute_attacker_strategy = execute_attacker_strategy;
-  game->execute_defender_strategy = execute_defender_strategy;
-
-  game->attacker = new_item('A', true);
-  game->defender = new_item('D', true);
-  game->obstacle = new_item('X', false);
-
-  game->attacker_spy = new_spy(game->attacker);
-  game->defender_spy = new_spy(game->defender);
-
-  return game;
-}
-
-/*----------------------------------------------------------------------------*/
-
-bool has_map_exceeded_max_occurrences_of_symbol(Map map,
-                                                char symbol,
-                                                size_t max_occurrences) {
-  if (max_occurrences == 0) return false;
-
-  dimension_t map_dimension = get_map_dimension(map);
-
-  size_t item_symbol_occurrences = 0;
-  for (size_t i = 0; i < map_dimension.height; i++) {
-    for (size_t j = 0; j < map_dimension.width; j++) {
-      position_t current_position = { i, j };
-      char current_map_symbol = get_map_symbol(map, current_position);
-
-      if (current_map_symbol == symbol) {
-        item_symbol_occurrences++;
-      }
-    }
-  }
-
-  return item_symbol_occurrences > max_occurrences ? true : false;
-}
-
-/*----------------------------------------------------------------------------*/
-
-void set_item_in_field_from_map(Field field,
-                                Item item,
-                                Map map) {
-  char item_symbol = get_item_symbol(item);
-
-  dimension_t map_dimension = get_map_dimension(map);
-  dimension_t field_dimension = get_field_dimension(field);
-
-  // By design, field should have the same dimension as the map
-  assert(field_dimension.height == map_dimension.height);
-  assert(field_dimension.width == map_dimension.width);
-
-  for (size_t i = 0; i < map_dimension.height; i++) {
-    for (size_t j = 0; j < map_dimension.width; j++) {
-      position_t current_position = { i, j };
-      char current_map_symbol = get_map_symbol(map, current_position);
-
-      if (current_map_symbol == item_symbol) {
-        add_item_to_field(field, item, current_position);
-      }
-    }
-  }
-}
-
-/*----------------------------------------------------------------------------*/
-
-void set_attacker_in_field(Field field, Item attacker) {
+void set_attacker_in_field(Field field, Player attacker) {
   if (field == NULL || attacker == NULL) return;
 
   dimension_t field_dimension = get_field_dimension(field);
@@ -307,12 +158,12 @@ void set_attacker_in_field(Field field, Item attacker) {
   position_t attacker_initial_position = {
     field_dimension.height / 2, 1 // Left side of field
   };
-  add_item_to_field(field, attacker, attacker_initial_position);
+  add_player_to_field(field, attacker, attacker_initial_position);
 }
 
 /*----------------------------------------------------------------------------*/
 
-void set_defender_in_field(Field field, Item defender) {
+void set_defender_in_field(Field field, Player defender) {
   if (field == NULL || defender == NULL) return;
 
   dimension_t field_dimension = get_field_dimension(field);
@@ -320,35 +171,7 @@ void set_defender_in_field(Field field, Item defender) {
   position_t defender_initial_position = {
     field_dimension.height / 2, field_dimension.width-2 // Right side of field
   };
-  add_item_to_field(field, defender, defender_initial_position);
-}
-
-/*----------------------------------------------------------------------------*/
-
-void set_obstacles_in_field(Field field, Item obstacle) {
-  dimension_t field_dimension = get_field_dimension(field);
-  size_t field_height = field_dimension.height;
-  size_t field_width = field_dimension.width;
-
-  for (size_t i = 0; i < field_height; i++) {
-    position_t left_border = { i, 0 };
-    add_item_to_field(field, obstacle, left_border);
-  }
-
-  for (size_t i = 0; i < field_height; i++) {
-    position_t right_border = { i, field_width-1 };
-    add_item_to_field(field, obstacle, right_border);
-  }
-
-  for (size_t j = 0; j < field_width; j++) {
-    position_t top_border = { 0, j };
-    add_item_to_field(field, obstacle, top_border);
-  }
-
-  for (size_t j = 0; j < field_width; j++) {
-    position_t bottom_border = { field_height-1, j };
-    add_item_to_field(field, obstacle, bottom_border);
-  }
+  add_player_to_field(field, defender, defender_initial_position);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -360,21 +183,21 @@ bool has_spy_exceeded_max_number_uses(Spy opponent_spy,
 
 /*----------------------------------------------------------------------------*/
 
-bool has_defender_captured_attacker(Item defender, Item attacker) {
+bool has_defender_captured_attacker(Player defender, Player attacker) {
   if (attacker == NULL || defender == NULL) return false;
 
-  position_t attacker_position = get_item_position(attacker);
-  position_t defender_position = get_item_position(defender);
+  position_t attacker_position = get_player_position(attacker);
+  position_t defender_position = get_player_position(defender);
 
   return neighbor_positions(defender_position, attacker_position);
 }
 
 /*----------------------------------------------------------------------------*/
 
-bool has_attacker_arrived_end_field(Field field, Item attacker) {
+bool has_attacker_arrived_end_field(Field field, Player attacker) {
   if (field == NULL || attacker == NULL) return false;
 
-  position_t attacker_position = get_item_position(attacker);
+  position_t attacker_position = get_player_position(attacker);
   dimension_t field_dimension = get_field_dimension(field);
 
   return attacker_position.j == field_dimension.width - 1;
@@ -382,16 +205,20 @@ bool has_attacker_arrived_end_field(Field field, Item attacker) {
 
 /*----------------------------------------------------------------------------*/
 
-void move_item(Field field,
-               Item item,
-               Spy opponent_spy,
-               PlayerStrategy execute_item_strategy) {
-  position_t item_position = get_item_position(item);
+void move_attacker(Field field, Player attacker, Spy defender_spy) {
+  UNUSED(defender_spy); // TODO: remove if using variable
 
-  direction_t item_direction
-    = execute_item_strategy(item_position, opponent_spy);
+  // TODO: Implement Attacker logic here
+  move_player_in_field(field, attacker, DIR_RIGHT);
+}
 
-  move_item_in_field(field, item, item_direction);
+/*----------------------------------------------------------------------------*/
+
+void move_defender(Field field, Player defender, Spy attacker_spy) {
+  UNUSED(attacker_spy); // TODO: remove if using variable
+
+  // TODO: Implement Defender logic here
+  move_player_in_field(field, defender, DIR_LEFT);
 }
 
 /*----------------------------------------------------------------------------*/

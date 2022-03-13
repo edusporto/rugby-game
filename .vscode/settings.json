@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "attacker.h": "c",
+        "defender.h": "c",
+        "map.h": "c",
+        "field.h": "c"
+    }
+}
